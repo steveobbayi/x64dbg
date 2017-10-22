@@ -150,9 +150,9 @@ BRIDGE_IMPEXP bool BridgeSettingGetUint(const char* section, const char* key, du
     if(!BridgeSettingGet(section, key, newvalue))
         return false;
 #ifdef _WIN64
-    int ret = sscanf(newvalue, "%llX", value);
+    int ret = sscanf_s(newvalue, "%llX", value);
 #else
-    int ret = sscanf(newvalue, "%X", value);
+    int ret = sscanf_s(newvalue, "%X", value);
 #endif //_WIN64
     if(ret)
         return true;
@@ -1646,6 +1646,18 @@ BRIDGE_IMPEXP void GuiFlushLog()
 BRIDGE_IMPEXP void GuiReferenceAddCommand(const char* title, const char* command)
 {
     _gui_sendmessage(GUI_REF_ADDCOMMAND, (void*)title, (void*)command);
+}
+
+BRIDGE_IMPEXP void GuiUpdateTraceBrowser()
+{
+    CHECK_GUI_UPDATE_DISABLED
+    _gui_sendmessage(GUI_UPDATE_TRACE_BROWSER, nullptr, nullptr);
+}
+
+BRIDGE_IMPEXP void GuiOpenTraceFile(const char* fileName)
+{
+    CHECK_GUI_UPDATE_DISABLED
+    _gui_sendmessage(GUI_OPEN_TRACE_FILE, (void*)fileName, nullptr);
 }
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)

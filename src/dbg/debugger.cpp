@@ -27,7 +27,7 @@
 #include "taskthread.h"
 #include "animate.h"
 #include "simplescript.h"
-#include "capstone_wrapper.h"
+#include "zydis_wrapper.h"
 #include "cmd-watch-control.h"
 #include "filemap.h"
 #include "jit.h"
@@ -86,10 +86,12 @@ bool bIgnoreInconsistentBreakpoints = false;
 bool bNoForegroundWindow = false;
 bool bVerboseExceptionLogging = true;
 bool bNoWow64SingleStepWorkaround = false;
+bool bTraceBrowserNeedsUpdate = false;
 duint DbgEvents = 0;
 duint maxSkipExceptionCount = 10000;
 HANDLE mProcHandle;
 HANDLE mForegroundHandle;
+duint mRtrPreviousCSP = 0;
 
 static duint dbgcleartracestate()
 {
@@ -226,6 +228,11 @@ static DWORD WINAPI dumpRefreshThread(void* ptr)
             break;
         GuiUpdateDumpView();
         GuiUpdateWatchView();
+        if(bTraceBrowserNeedsUpdate)
+        {
+            bTraceBrowserNeedsUpdate = false;
+            GuiUpdateTraceBrowser();
+        }
         Sleep(400);
     }
     return 0;
@@ -239,6 +246,7 @@ void cbDebuggerPaused()
     // Clear tracing conditions
     dbgcleartracestate();
     dbgClearRtuBreakpoints();
+    mRtrPreviousCSP = 0;
     // Trace record is not handled by this function currently.
     // Signal thread switch warning
     if(settingboolget("Engine", "HardcoreThreadSwitchWarning"))
@@ -371,6 +379,11 @@ bool dbgcmddel(const char* name)
 duint dbggetdbgevents()
 {
     return InterlockedExchange((volatile long*)&DbgEvents, 0);
+}
+
+void dbgtracebrowserneedsupdate()
+{
+    bTraceBrowserNeedsUpdate = true;
 }
 
 static DWORD WINAPI updateCallStackThread(duint ptr)
@@ -956,7 +969,7 @@ static BOOL CALLBACK SymRegisterCallbackProc64(HANDLE, ULONG ActionCode, ULONG64
             suspress = true;
             zerobar = true;
         }
-        else if(sscanf(text, "%*s %d percent", &percent) == 1 || sscanf(text, "%d percent", &percent) == 1)
+        else if(sscanf_s(text, "%*s %d percent", &percent) == 1 || sscanf_s(text, "%d percent", &percent) == 1)
         {
             GuiSymbolSetProgress(percent);
             suspress = true;
@@ -1149,30 +1162,36 @@ void cbRtrStep()
     hActiveThread = ThreadGetHandle(((DEBUG_EVENT*)GetDebugData())->dwThreadId);
     unsigned char ch = 0x90;
     duint cip = GetContextDataEx(hActiveThread, UE_CIP);
+    duint csp = GetContextDataEx(hActiveThread, UE_CSP);
     MemRead(cip, &ch, 1);
     if(bTraceRecordEnabledDuringTrace)
         _dbg_dbgtraceexecute(cip);
-    if(ch == 0xC3 || ch == 0xC2)
-        cbRtrFinalStep(true);
-    else if(ch == 0x26 || ch == 0x36 || ch == 0x2e || ch == 0x3e || (ch >= 0x64 && ch <= 0x67) || ch == 0xf2 || ch == 0xf3 //instruction prefixes
-#ifdef _WIN64
-            || (ch >= 0x40 && ch <= 0x4f)
-#endif //_WIN64
-           )
+    if(mRtrPreviousCSP <= csp) //"Run until return" should break only if RSP is bigger than or equal to current value
     {
-        Capstone cp;
-        unsigned char data[MAX_DISASM_BUFFER];
-        memset(data, 0, sizeof(data));
-        MemRead(cip, data, MAX_DISASM_BUFFER);
-        if(cp.Disassemble(cip, data) && cp.GetId() == X86_INS_RET)
+        if(ch == 0xC3 || ch == 0xC2) //retn instruction
             cbRtrFinalStep(true);
+        else if(ch == 0x26 || ch == 0x36 || ch == 0x2e || ch == 0x3e || (ch >= 0x64 && ch <= 0x67) || ch == 0xf2 || ch == 0xf3 //instruction prefixes
+#ifdef _WIN64
+                || (ch >= 0x40 && ch <= 0x4f)
+#endif //_WIN64
+               )
+        {
+            Zydis cp;
+            unsigned char data[MAX_DISASM_BUFFER];
+            memset(data, 0, sizeof(data));
+            MemRead(cip, data, MAX_DISASM_BUFFER);
+            if(cp.Disassemble(cip, data) && cp.IsRet())
+                cbRtrFinalStep(true);
+            else
+                StepOver((void*)cbRtrStep);
+        }
         else
+        {
             StepOver((void*)cbRtrStep);
+        }
     }
     else
-    {
         StepOver((void*)cbRtrStep);
-    }
 }
 
 static void cbTraceUniversalConditionalStep(duint cip, bool bStepInto, void(*callback)(), bool forceBreakTrace)
@@ -2506,11 +2525,6 @@ void dbgstartscriptthread(CBPLUGINSCRIPT cbScript)
     CloseHandle(CreateThread(0, 0, scriptThread, (LPVOID)cbScript, 0, 0));
 }
 
-duint dbggetdebuggedbase()
-{
-    return pDebuggedBase;
-}
-
 static void debugLoopFunction(void* lpParameter, bool attach)
 {
     //we are running
@@ -2712,6 +2726,7 @@ static void debugLoopFunction(void* lpParameter, bool attach)
     ThreadClear();
     WatchClear();
     TraceRecord.clear();
+    _dbg_dbgenableRunTrace(false, nullptr); //Stop run trace
     GuiSetDebugState(stopped);
     GuiUpdateAllViews();
     dputs(QT_TRANSLATE_NOOP("DBG", "Debugging stopped!"));
