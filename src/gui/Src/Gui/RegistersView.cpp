@@ -136,8 +136,11 @@ void RegistersView::InitMappings()
     offset++;
 
     mRegisterMapping.insert(LastError, "LastError");
-    mRegisterPlaces.insert(LastError, Register_Position(offset++, 0, 10, 20));
+    mRegisterPlaces.insert(LastError, Register_Position(offset++, 0, 11, 20));
     mMODIFYDISPLAY.insert(LastError);
+    mRegisterMapping.insert(LastStatus, "LastStatus");
+    mRegisterPlaces.insert(LastStatus, Register_Position(offset++, 0, 11, 20));
+    mMODIFYDISPLAY.insert(LastStatus);
 
     offset++;
 
@@ -1244,6 +1247,7 @@ RegistersView::RegistersView(CPUWidget* parent) : QScrollArea(parent), mVScrollO
 #endif
     //registers that should not be changed
     mNoChange.insert(LastError);
+    mNoChange.insert(LastStatus);
 
     mNoChange.insert(GS);
     mUSHORTDISPLAY.insert(GS);
@@ -1311,8 +1315,8 @@ RegistersView::RegistersView(CPUWidget* parent) : QScrollArea(parent), mVScrollO
 
     InitMappings();
 
-    memset(&wRegDumpStruct, 0, sizeof(REGDUMP));
-    memset(&wCipRegDumpStruct, 0, sizeof(REGDUMP));
+    memset(&wRegDumpStruct, 0, sizeof(REGDUMP_V2));
+    memset(&wCipRegDumpStruct, 0, sizeof(REGDUMP_V2));
     mCip = 0;
     mRegisterUpdates.clear();
 
@@ -1619,6 +1623,9 @@ QString RegistersView::helpRegister(REGISTER_NAME reg)
     case LastError:
         //TODO: display help message of the specific error instead of this very generic message.
         return tr("The value of GetLastError(). This value is stored in the TEB.");
+    case LastStatus:
+        //TODO: display help message of the specific status instead of this very generic message.
+        return tr("The NTSTATUS in the LastStatusValue field of the TEB.");
 #ifdef _WIN64
     case GS:
         return tr("The TEB of the current thread can be accessed as an offset of segment register GS (x64).\nThe TEB can be used to get a lot of information on the process without calling Win32 API.");
@@ -2040,6 +2047,15 @@ QString RegistersView::GetRegStringValueFromValue(REGISTER_NAME reg, const char*
         else
             valueText = QString().sprintf("%08X", data->code);
         mRegisterPlaces[LastError].valuesize = valueText.length();
+    }
+    else if(reg == LastStatus)
+    {
+        LASTSTATUS* data = (LASTSTATUS*)value;
+        if(*data->name)
+            valueText = QString().sprintf("%08X (%s)", data->code, data->name);
+        else
+            valueText = QString().sprintf("%08X", data->code);
+        mRegisterPlaces[LastStatus].valuesize = valueText.length();
     }
     else
     {
@@ -2482,9 +2498,9 @@ void RegistersView::drawRegister(QPainter* p, REGISTER_NAME reg, char* value)
 void RegistersView::updateRegistersSlot()
 {
     // read registers
-    REGDUMP z;
-    memset(&z, 0, sizeof(REGDUMP));
-    DbgGetRegDump(&z);
+    REGDUMP_V2 z;
+    memset(&z, 0, sizeof(REGDUMP_V2));
+    DbgGetRegDumpEx((REGDUMP*)&z, sizeof(REGDUMP_V2));
     // update gui
     setRegisters(&z);
 }
@@ -2691,6 +2707,27 @@ void RegistersView::displayEditDialog()
         while(errorinput);
         setRegister(LastError, DbgValFromString(mLineEdit.editText.toUtf8().constData()));
     }
+    else if(mSelected == LastStatus)
+    {
+        bool statusinput = false;
+        LineEditDialog mLineEdit(this);
+        LASTSTATUS* status = (LASTSTATUS*)registerValue(&wRegDumpStruct, LastStatus);
+        mLineEdit.setText(QString::number(status->code, 16));
+        mLineEdit.setWindowTitle(tr("Set Last Status"));
+        mLineEdit.setCursorPosition(0);
+        do
+        {
+            statusinput = true;
+            mLineEdit.show();
+            mLineEdit.selectAllText();
+            if(mLineEdit.exec() != QDialog::Accepted)
+                return;
+            if(DbgIsValidExpression(mLineEdit.editText.toUtf8().constData()))
+                statusinput = false;
+        }
+        while(statusinput);
+        setRegister(LastStatus, DbgValFromString(mLineEdit.editText.toUtf8().constData()));
+    }
     else
     {
         WordEditDialog wEditDial(this);
@@ -2878,6 +2915,7 @@ void RegistersView::onCopyAllAction()
     appendRegister(text, REGISTER_NAME::DF, "DF : ", "DF : ");
     appendRegister(text, REGISTER_NAME::IF, "IF : ", "IF : ");
     appendRegister(text, REGISTER_NAME::LastError, "LastError : ", "LastError : ");
+    appendRegister(text, REGISTER_NAME::LastStatus, "LastStatus : ", "LastStatus : ");
     appendRegister(text, REGISTER_NAME::GS, "GS : ", "GS : ");
     appendRegister(text, REGISTER_NAME::ES, "ES : ", "ES : ");
     appendRegister(text, REGISTER_NAME::CS, "CS : ", "CS : ");
@@ -3280,14 +3318,16 @@ SIZE_T RegistersView::GetSizeRegister(const REGISTER_NAME reg_name)
     else if(mFPUYMM.contains(reg_name))
         size = 32;
     else if(reg_name == LastError)
-        return sizeof(DWORD);
+        size = sizeof(DWORD);
+    else if(reg_name == LastStatus)
+        size = sizeof(NTSTATUS);
     else
         size = 0;
 
     return size;
 }
 
-int RegistersView::CompareRegisters(const REGISTER_NAME reg_name, REGDUMP* regdump1, REGDUMP* regdump2)
+int RegistersView::CompareRegisters(const REGISTER_NAME reg_name, REGDUMP_V2* regdump1, REGDUMP_V2* regdump2)
 {
     SIZE_T size = GetSizeRegister(reg_name);
     char* reg1_data = registerValue(regdump1, reg_name);
@@ -3299,7 +3339,7 @@ int RegistersView::CompareRegisters(const REGISTER_NAME reg_name, REGDUMP* regdu
     return -1;
 }
 
-char* RegistersView::registerValue(const REGDUMP* regd, const REGISTER_NAME reg)
+char* RegistersView::registerValue(const REGDUMP_V2* regd, const REGISTER_NAME reg)
 {
     static int null_value = 0;
     // this is probably the most efficient general method to access the values of the struct
@@ -3382,6 +3422,8 @@ char* RegistersView::registerValue(const REGDUMP* regd, const REGISTER_NAME reg)
 
     case LastError:
         return (char*) &regd->lastError;
+    case LastStatus:
+        return (char*) &regd->lastStatus;
 
     case DR0:
         return (char*) &regd->regcontext.dr0;
@@ -3612,7 +3654,7 @@ char* RegistersView::registerValue(const REGDUMP* regd, const REGISTER_NAME reg)
     return (char*) &null_value;
 }
 
-void RegistersView::setRegisters(REGDUMP* reg)
+void RegistersView::setRegisters(REGDUMP_V2* reg)
 {
     // tests if new-register-value == old-register-value holds
     if(mCip != reg->regcontext.cip) //CIP changed
