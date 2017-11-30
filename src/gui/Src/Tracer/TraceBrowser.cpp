@@ -478,6 +478,7 @@ void TraceBrowser::setupRightClickContextMenu()
             return (duint)0;
     });
     mBreakpointMenu->build(mMenuBuilder);
+    mMenuBuilder->addAction(makeShortcutAction(DIcon("label.png"), tr("Label Current Address"), SLOT(setLabelSlot()), "ActionSetLabel"), isDebugging);
     mMenuBuilder->addAction(makeShortcutAction(DIcon("comment.png"), tr("&Comment"), SLOT(setCommentSlot()), "ActionSetComment"), isDebugging);
     mMenuBuilder->addAction(makeShortcutAction(DIcon("highlight.png"), tr("&Highlighting mode"), SLOT(enableHighlightingModeSlot()), "ActionHighlightingMode"), isValid);
     MenuBuilder* gotoMenu = new MenuBuilder(this, isValid);
@@ -546,6 +547,16 @@ void TraceBrowser::setupRightClickContextMenu()
 #endif //_WIN64
         addReg(ArchValue("EIP", "RIP"), cip)
         addReg(ArchValue("EFLAGS", "RFLAGS"), eflags)
+        menu->addSeparator();
+        menu->addAction(QString("ThreadID: %1").arg(mTraceFile->ThreadId(index)));
+        if(index + 1 < mTraceFile->Length())
+        {
+            menu->addAction(QString("LastError: %1 -> %2").arg(ToPtrString(mTraceFile->Registers(index).lastError.code)).arg(ToPtrString(mTraceFile->Registers(index + 1).lastError.code)));
+        }
+        else
+        {
+            menu->addAction(QString("LastError: %1").arg(ToPtrString(mTraceFile->Registers(index).lastError.code)));
+        }
         return true;
     });
     mMenuBuilder->addMenu(makeMenu(tr("Information")), infoMenu);
@@ -854,7 +865,7 @@ void TraceBrowser::updateColors()
 
 void TraceBrowser::openFileSlot()
 {
-    BrowseDialog browse(this, tr("Open run trace file"), tr("Open trace file"), tr("Run trace files (*.%1);;All files (*.*)").arg(ArchValue("trace32", "trace64")), QApplication::applicationDirPath(), false);
+    BrowseDialog browse(this, tr("Open run trace file"), tr("Open trace file"), tr("Run trace files (*.%1);;All files (*.*)").arg(ArchValue("trace32", "trace64")), QApplication::applicationDirPath() + QDir::separator() + "db", false);
     if(browse.exec() != QDialog::Accepted)
         return;
     emit openSlot(browse.path);
@@ -936,7 +947,9 @@ void TraceBrowser::parseFinishedSlot()
 
 void TraceBrowser::gotoSlot()
 {
-    GotoDialog gotoDlg(this, false, true); // Problem: Cannot use when not debugging
+    if(mTraceFile == nullptr || mTraceFile->Progress() < 100)
+        return;
+    GotoDialog gotoDlg(this, false, true); // TODO: Cannot use when not debugging
     if(gotoDlg.exec() == QDialog::Accepted)
     {
         auto val = DbgValFromString(gotoDlg.expressionText.toUtf8().constData());
@@ -1090,6 +1103,9 @@ void TraceBrowser::pushSelectionInto(bool copyBytes, QTextStream & stream, QText
 
 void TraceBrowser::copySelectionSlot(bool copyBytes)
 {
+    if(mTraceFile == nullptr || mTraceFile->Progress() < 100)
+        return;
+
     QString selectionString = "";
     QString selectionHtmlString = "";
     QTextStream stream(&selectionString);
@@ -1100,6 +1116,9 @@ void TraceBrowser::copySelectionSlot(bool copyBytes)
 
 void TraceBrowser::copySelectionToFileSlot(bool copyBytes)
 {
+    if(mTraceFile == nullptr || mTraceFile->Progress() < 100)
+        return;
+
     QString fileName = QFileDialog::getSaveFileName(this, tr("Open File"), "", tr("Text Files (*.txt)"));
     if(fileName != "")
     {
@@ -1138,6 +1157,9 @@ void TraceBrowser::copySelectionToFileNoBytesSlot()
 
 void TraceBrowser::copyDisassemblySlot()
 {
+    if(mTraceFile == nullptr || mTraceFile->Progress() < 100)
+        return;
+
     QString clipboardHtml = QString("<div style=\"font-family: %1; font-size: %2px\">").arg(font().family()).arg(getRowHeight());
     QString clipboard = "";
     for(auto i = getSelectionStart(); i <= getSelectionEnd(); i++)
@@ -1162,6 +1184,9 @@ void TraceBrowser::copyDisassemblySlot()
 void TraceBrowser::copyRvaSlot()
 {
     QString text;
+    if(mTraceFile == nullptr || mTraceFile->Progress() < 100)
+        return;
+
     for(unsigned long long i = getSelectionStart(); i <= getSelectionEnd(); i++)
     {
         duint cip = mTraceFile->Registers(i).regcontext.cip;
@@ -1184,6 +1209,9 @@ void TraceBrowser::copyRvaSlot()
 void TraceBrowser::copyFileOffsetSlot()
 {
     QString text;
+    if(mTraceFile == nullptr || mTraceFile->Progress() < 100)
+        return;
+
     for(unsigned long long i = getSelectionStart(); i <= getSelectionEnd(); i++)
     {
         duint cip = mTraceFile->Registers(i).regcontext.cip;
@@ -1205,7 +1233,7 @@ void TraceBrowser::copyFileOffsetSlot()
 
 void TraceBrowser::setCommentSlot()
 {
-    if(!DbgIsDebugging())
+    if(!DbgIsDebugging() || mTraceFile == nullptr || mTraceFile->Progress() < 100)
         return;
     duint wVA = mTraceFile->Registers(getInitialSelection()).regcontext.cip;
     LineEditDialog mLineEdit(this);
@@ -1240,6 +1268,39 @@ void TraceBrowser::setCommentSlot()
     GuiUpdateAllViews();
 }
 
+void TraceBrowser::setLabelSlot()
+{
+    if(!DbgIsDebugging() || mTraceFile == nullptr || mTraceFile->Progress() < 100)
+        return;
+    duint wVA = mTraceFile->Registers(getInitialSelection()).regcontext.cip;
+    LineEditDialog mLineEdit(this);
+    mLineEdit.setTextMaxLength(MAX_LABEL_SIZE - 2);
+    QString addr_text = ToPtrString(wVA);
+    char label_text[MAX_COMMENT_SIZE] = "";
+    if(DbgGetLabelAt((duint)wVA, SEG_DEFAULT, label_text))
+        mLineEdit.setText(QString(label_text));
+    mLineEdit.setWindowTitle(tr("Add label at ") + addr_text);
+restart:
+    if(mLineEdit.exec() != QDialog::Accepted)
+        return;
+    QByteArray utf8data = mLineEdit.editText.toUtf8();
+    if(!utf8data.isEmpty() && DbgIsValidExpression(utf8data.constData()) && DbgValFromString(utf8data.constData()) != wVA)
+    {
+        QMessageBox msg(QMessageBox::Warning, tr("The label may be in use"),
+                        tr("The label \"%1\" may be an existing label or a valid expression. Using such label might have undesired effects. Do you still want to continue?").arg(mLineEdit.editText),
+                        QMessageBox::Yes | QMessageBox::No, this);
+        msg.setWindowIcon(DIcon("compile-warning.png"));
+        msg.setParent(this, Qt::Dialog);
+        msg.setWindowFlags(msg.windowFlags() & (~Qt::WindowContextHelpButtonHint));
+        if(msg.exec() == QMessageBox::No)
+            goto restart;
+    }
+    if(!DbgSetLabelAt(wVA, utf8data.constData()))
+        SimpleErrorBox(this, tr("Error!"), tr("DbgSetLabelAt failed!"));
+
+    GuiUpdateAllViews();
+}
+
 void TraceBrowser::enableHighlightingModeSlot()
 {
     if(mHighlightingMode)
@@ -1251,7 +1312,14 @@ void TraceBrowser::enableHighlightingModeSlot()
 
 void TraceBrowser::followDisassemblySlot()
 {
-    DbgCmdExec(QString("dis ").append(ToPtrString(mTraceFile->Registers(getInitialSelection()).regcontext.cip)).toUtf8().constData());
+    if(mTraceFile == nullptr || mTraceFile->Progress() < 100)
+        return;
+
+    duint cip = mTraceFile->Registers(getInitialSelection()).regcontext.cip;
+    if(DbgMemIsValidReadPtr(cip))
+        DbgCmdExec(QString("dis ").append(ToPtrString(cip)).toUtf8().constData());
+    else
+        GuiAddStatusBarMessage(tr("Cannot follow %1. Address is invalid.\n").arg(ToPtrString(cip)).toUtf8().constData());
 }
 
 void TraceBrowser::searchConstantSlot()

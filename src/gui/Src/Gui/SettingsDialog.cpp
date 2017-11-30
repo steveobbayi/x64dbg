@@ -15,6 +15,7 @@ SettingsDialog::SettingsDialog(QWidget* parent) :
     setModal(true);
     adjustSize();
     bTokenizerConfigUpdated = false;
+    bDisableAutoCompleteUpdated = false;
     LoadSettings(); //load settings from file
     connect(Bridge::getBridge(), SIGNAL(setLastException(uint)), this, SLOT(setLastException(uint)));
     lastException = 0;
@@ -65,6 +66,8 @@ void SettingsDialog::LoadSettings()
     settings.engineVerboseExceptionLogging = true;
     settings.exceptionRanges = &realExceptionRanges;
     settings.disasmArgumentSpaces = false;
+    settings.disasmHidePointerSizes = false;
+    settings.disasmHideNormalSegments = false;
     settings.disasmMemorySpaces = false;
     settings.disasmUppercase = false;
     settings.disasmOnlyCipAutoComments = false;
@@ -74,6 +77,7 @@ void SettingsDialog::LoadSettings()
     settings.disasmNoSourceLineAutoComments = false;
     settings.disasmMaxModuleSize = -1;
     settings.guiNoForegroundWindow = true;
+    settings.guiDisableAutoComplete = false;
 
     //Events tab
     GetSettingBool("Events", "SystemBreakpoint", &settings.eventSystemBreakpoint);
@@ -192,6 +196,8 @@ void SettingsDialog::LoadSettings()
 
     //Disasm tab
     GetSettingBool("Disassembler", "ArgumentSpaces", &settings.disasmArgumentSpaces);
+    GetSettingBool("Disassembler", "HidePointerSizes", &settings.disasmHidePointerSizes);
+    GetSettingBool("Disassembler", "HideNormalSegments", &settings.disasmHideNormalSegments);
     GetSettingBool("Disassembler", "MemorySpaces", &settings.disasmMemorySpaces);
     GetSettingBool("Disassembler", "Uppercase", &settings.disasmUppercase);
     GetSettingBool("Disassembler", "OnlyCipAutoComments", &settings.disasmOnlyCipAutoComments);
@@ -204,6 +210,8 @@ void SettingsDialog::LoadSettings()
     if(BridgeSettingGetUint("Disassembler", "MaxModuleSize", &cur))
         settings.disasmMaxModuleSize = int(cur);
     ui->chkArgumentSpaces->setChecked(settings.disasmArgumentSpaces);
+    ui->chkHidePointerSizes->setChecked(settings.disasmHidePointerSizes);
+    ui->chkHideNormalSegments->setChecked(settings.disasmHideNormalSegments);
     ui->chkMemorySpaces->setChecked(settings.disasmMemorySpaces);
     ui->chkUppercase->setChecked(settings.disasmUppercase);
     ui->chkOnlyCipAutoComments->setChecked(settings.disasmOnlyCipAutoComments);
@@ -225,6 +233,7 @@ void SettingsDialog::LoadSettings()
     GetSettingBool("Gui", "LoadSaveTabOrder", &settings.guiLoadSaveTabOrder);
     GetSettingBool("Gui", "ShowGraphRva", &settings.guiShowGraphRva);
     GetSettingBool("Gui", "ShowExitConfirmation", &settings.guiShowExitConfirmation);
+    GetSettingBool("Gui", "DisableAutoComplete", &settings.guiDisableAutoComplete);
     ui->chkFpuRegistersLittleEndian->setChecked(settings.guiFpuRegistersLittleEndian);
     ui->chkSaveColumnOrder->setChecked(settings.guiSaveColumnOrder);
     ui->chkNoCloseDialog->setChecked(settings.guiNoCloseDialog);
@@ -234,6 +243,7 @@ void SettingsDialog::LoadSettings()
     ui->chkSaveLoadTabOrder->setChecked(settings.guiLoadSaveTabOrder);
     ui->chkShowGraphRva->setChecked(settings.guiShowGraphRva);
     ui->chkShowExitConfirmation->setChecked(settings.guiShowExitConfirmation);
+    ui->chkDisableAutoComplete->setChecked(settings.guiDisableAutoComplete);
 
     //Misc tab
     if(DbgFunctions()->GetJit)
@@ -349,6 +359,8 @@ void SettingsDialog::SaveSettings()
 
     //Disasm tab
     BridgeSettingSetUint("Disassembler", "ArgumentSpaces", settings.disasmArgumentSpaces);
+    BridgeSettingSetUint("Disassembler", "HidePointerSizes", settings.disasmHidePointerSizes);
+    BridgeSettingSetUint("Disassembler", "HideNormalSegments", settings.disasmHideNormalSegments);
     BridgeSettingSetUint("Disassembler", "MemorySpaces", settings.disasmMemorySpaces);
     BridgeSettingSetUint("Disassembler", "Uppercase", settings.disasmUppercase);
     BridgeSettingSetUint("Disassembler", "OnlyCipAutoComments", settings.disasmOnlyCipAutoComments);
@@ -370,6 +382,7 @@ void SettingsDialog::SaveSettings()
     BridgeSettingSetUint("Gui", "LoadSaveTabOrder", settings.guiLoadSaveTabOrder);
     BridgeSettingSetUint("Gui", "ShowGraphRva", settings.guiShowGraphRva);
     BridgeSettingSetUint("Gui", "ShowExitConfirmation", settings.guiShowExitConfirmation);
+    BridgeSettingSetUint("Gui", "DisableAutoComplete", settings.guiDisableAutoComplete);
 
     //Misc tab
     if(DbgFunctions()->GetJit)
@@ -406,6 +419,11 @@ void SettingsDialog::SaveSettings()
     {
         Config()->emitTokenizerConfigUpdated();
         bTokenizerConfigUpdated = false;
+    }
+    if(bDisableAutoCompleteUpdated)
+    {
+        Config()->emitDisableAutoCompleteUpdated();
+        bDisableAutoCompleteUpdated = false;
     }
     DbgSettingsUpdated();
     GuiUpdateAllViews();
@@ -685,6 +703,18 @@ void SettingsDialog::on_chkArgumentSpaces_stateChanged(int arg1)
     settings.disasmArgumentSpaces = arg1 != Qt::Unchecked;
 }
 
+void SettingsDialog::on_chkHidePointerSizes_stateChanged(int arg1)
+{
+    bTokenizerConfigUpdated = true;
+    settings.disasmHidePointerSizes = arg1 != Qt::Unchecked;
+}
+
+void SettingsDialog::on_chkHideNormalSegments_stateChanged(int arg1)
+{
+    bTokenizerConfigUpdated = true;
+    settings.disasmHideNormalSegments = arg1 != Qt::Unchecked;
+}
+
 void SettingsDialog::on_chkMemorySpaces_stateChanged(int arg1)
 {
     bTokenizerConfigUpdated = true;
@@ -829,6 +859,12 @@ void SettingsDialog::on_chkShowGraphRva_toggled(bool checked)
 void SettingsDialog::on_chkShowExitConfirmation_toggled(bool checked)
 {
     settings.guiShowExitConfirmation = checked;
+}
+
+void SettingsDialog::on_chkDisableAutoComplete_toggled(bool checked)
+{
+    settings.guiDisableAutoComplete = checked;
+    bDisableAutoCompleteUpdated = true;
 }
 
 void SettingsDialog::on_chkUseLocalHelpFile_toggled(bool checked)

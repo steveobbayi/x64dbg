@@ -176,8 +176,7 @@ void LocalVarsView::updateSlot()
         return;
     }
     REGDUMP z;
-    memset(&z, 0, sizeof(REGDUMP));
-    DbgGetRegDump(&z);
+    DbgGetRegDumpEx(&z, sizeof(REGDUMP));
     duint start, end;
 
     if(DbgFunctionGet(z.regcontext.cip, &start, &end))
@@ -305,7 +304,7 @@ void LocalVarsView::updateSlot()
             if(DbgIsValidExpression(buf.constData()))
             {
                 val = DbgValFromString(buf.constData());
-                setCellContent(i, 2, ToPtrString(val));
+                setCellContent(i, 2, getSymbolicNameStr(val));
             }
             else
                 setCellContent(i, 2, "???");

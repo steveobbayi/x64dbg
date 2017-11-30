@@ -169,14 +169,14 @@ void CPUDisassembly::setupFollowReferenceMenu(dsint wVA, QMenu* menu, bool isRef
                 if(arg.segment == SEG_FS)
                     segment = "fs:";
 #endif //_WIN64
-                if(DbgMemIsValidReadPtr(arg.value))
-                    addFollowReferenceMenuItem(tr("&Address: ") + segment + QString(arg.mnemonic).toUpper().trimmed(), arg.value, menu, isReferences, isFollowInCPU);
                 if(arg.value != arg.constant)
                 {
-                    QString constant = ToHexString(arg.constant);
-                    if(DbgMemIsValidReadPtr(arg.constant))
-                        addFollowReferenceMenuItem(tr("&Constant: ") + constant, arg.constant, menu, isReferences, isFollowInCPU);
+                    if(DbgMemIsValidReadPtr(arg.value))
+                        addFollowReferenceMenuItem(tr("&Address: ") + segment + QString(arg.mnemonic).toUpper().trimmed(), arg.value, menu, isReferences, isFollowInCPU);
                 }
+                QString constant = ToHexString(arg.constant);
+                if(DbgMemIsValidReadPtr(arg.constant))
+                    addFollowReferenceMenuItem(tr("&Constant: ") + constant, arg.constant, menu, isReferences, isFollowInCPU);
                 if(DbgMemIsValidReadPtr(arg.memvalue))
                 {
                     addFollowReferenceMenuItem(tr("&Value: ") + segment + "[" + QString(arg.mnemonic) + "]", arg.memvalue, menu, isReferences, isFollowInCPU);
@@ -203,7 +203,7 @@ void CPUDisassembly::setupFollowReferenceMenu(dsint wVA, QMenu* menu, bool isRef
             else //arg_normal
             {
                 if(DbgMemIsValidReadPtr(arg.value))
-                    addFollowReferenceMenuItem(QString(arg.mnemonic).toUpper().trimmed(), arg.value, menu, isReferences, isFollowInCPU);
+                    addFollowReferenceMenuItem(QString(arg.mnemonic).trimmed(), arg.value, menu, isReferences, isFollowInCPU);
             }
         }
     }
@@ -259,8 +259,14 @@ void CPUDisassembly::setupRightClickContextMenu()
     binaryMenu->addAction(makeShortcutAction(DIcon("binary_fill_nop.png"), tr("Fill with &NOPs"), SLOT(binaryFillNopsSlot()), "ActionBinaryFillNops"));
     binaryMenu->addSeparator();
     binaryMenu->addAction(makeShortcutAction(DIcon("binary_copy.png"), tr("&Copy"), SLOT(binaryCopySlot()), "ActionBinaryCopy"));
-    binaryMenu->addAction(makeShortcutAction(DIcon("binary_paste.png"), tr("&Paste"), SLOT(binaryPasteSlot()), "ActionBinaryPaste"));
-    binaryMenu->addAction(makeShortcutAction(DIcon("binary_paste_ignoresize.png"), tr("Paste (&Ignore Size)"), SLOT(binaryPasteIgnoreSizeSlot()), "ActionBinaryPasteIgnoreSize"));
+    binaryMenu->addAction(makeShortcutAction(DIcon("binary_paste.png"), tr("&Paste"), SLOT(binaryPasteSlot()), "ActionBinaryPaste"), [](QMenu*)
+    {
+        return QApplication::clipboard()->mimeData()->hasText();
+    });
+    binaryMenu->addAction(makeShortcutAction(DIcon("binary_paste_ignoresize.png"), tr("Paste (&Ignore Size)"), SLOT(binaryPasteIgnoreSizeSlot()), "ActionBinaryPasteIgnoreSize"), [](QMenu*)
+    {
+        return QApplication::clipboard()->mimeData()->hasText();
+    });
     mMenuBuilder->addMenu(makeMenu(DIcon("binary.png"), tr("&Binary")), binaryMenu);
 
     MenuBuilder* copyMenu = new MenuBuilder(this);
@@ -582,11 +588,11 @@ void CPUDisassembly::setupRightClickContextMenu()
     mSearchRegionMenu->addAction(mFindGUIDRegion);
 
     // Search in Current Module menu
-    mFindCommandModule = makeAction(DIcon("search_for_command.png"), tr("C&ommand"), SLOT(findCommandSlot()));
+    mFindCommandModule = makeShortcutAction(DIcon("search_for_command.png"), tr("C&ommand"), SLOT(findCommandSlot()), "ActionFindInModule");
     mFindConstantModule = makeAction(DIcon("search_for_constant.png"), tr("&Constant"), SLOT(findConstantSlot()));
     mFindStringsModule = makeAction(DIcon("search_for_string.png"), tr("&String references"), SLOT(findStringsSlot()));
     mFindCallsModule = makeAction(DIcon("call.png"), tr("&Intermodular calls"), SLOT(findCallsSlot()));
-    mFindPatternModule = makeAction(DIcon("search_for_pattern.png"), tr("&Pattern"), SLOT(findPatternSlot()));
+    mFindPatternModule = makeShortcutAction(DIcon("search_for_pattern.png"), tr("&Pattern"), SLOT(findPatternSlot()), "ActionFindPatternInModule");
     mFindGUIDModule = makeAction(DIcon("guid.png"), tr("&GUID"), SLOT(findGUIDSlot()));
     mSearchModuleMenu->addAction(mFindCommandModule);
     mSearchModuleMenu->addAction(mFindConstantModule);
@@ -975,6 +981,7 @@ void CPUDisassembly::gotoExpressionSlot()
         return;
     if(!mGoto)
         mGoto = new GotoDialog(this);
+    mGoto->setInitialExpression(ToPtrString(rvaToVa(getInitialSelection())));
     if(mGoto->exec() == QDialog::Accepted)
     {
         duint value = DbgValFromString(mGoto->expressionText.toUtf8().constData());
@@ -997,6 +1004,17 @@ void CPUDisassembly::gotoFileOffsetSlot()
     mGotoOffset->fileOffset = true;
     mGotoOffset->modName = QString(modname);
     mGotoOffset->setWindowTitle(tr("Goto File Offset in ") + QString(modname));
+    QString offsetOfSelected;
+    prepareDataRange(getSelectionStart(), getSelectionEnd(), [&](int, const Instruction_t & inst)
+    {
+        duint addr = rvaToVa(inst.rva);
+        duint offset = DbgFunctions()->VaToFileOffset(addr);
+        if(offset)
+            offsetOfSelected = ToHexString(offset);
+        return false;
+    });
+    if(!offsetOfSelected.isEmpty())
+        mGotoOffset->setInitialExpression(offsetOfSelected);
     if(mGotoOffset->exec() != QDialog::Accepted)
         return;
     duint value = DbgValFromString(mGotoOffset->expressionText.toUtf8().constData());
@@ -1362,6 +1380,8 @@ void CPUDisassembly::binaryCopySlot()
 
 void CPUDisassembly::binaryPasteSlot()
 {
+    if(!QApplication::clipboard()->mimeData()->hasText())
+        return;
     HexEditDialog hexEdit(this);
     dsint selStart = getSelectionStart();
     dsint selSize = getSelectionEnd() - selStart + 1;
@@ -1389,6 +1409,8 @@ void CPUDisassembly::undoSelectionSlot()
 
 void CPUDisassembly::binaryPasteIgnoreSizeSlot()
 {
+    if(!QApplication::clipboard()->mimeData()->hasText())
+        return;
     HexEditDialog hexEdit(this);
     dsint selStart = getSelectionStart();
     dsint selSize = getSelectionEnd() - selStart + 1;

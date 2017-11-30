@@ -6,40 +6,6 @@ bool Zydis::mInitialized = false;
 ZydisDecoder Zydis::mDecoder;
 ZydisFormatter Zydis::mFormatter;
 
-static ZydisStatus ZydisFormatterPrintDisplacementIntelCustom(const ZydisFormatter* formatter,
-        char** buffer, size_t bufferLen, const ZydisDecodedInstruction* instruction,
-        const ZydisDecodedOperand* operand, void* userData)
-{
-    if(!formatter || !buffer || !*buffer || (bufferLen <= 0) || !instruction || !operand)
-    {
-        return ZYDIS_STATUS_INVALID_PARAMETER;
-    }
-
-    if(operand->mem.disp.hasDisplacement && ((operand->mem.disp.value) ||
-            ((operand->mem.base == ZYDIS_REGISTER_NONE) &&
-             (operand->mem.index == ZYDIS_REGISTER_NONE))))
-    {
-        ZydisBool printSignedHEX =
-            (formatter->displacementFormat != ZYDIS_FORMATTER_DISP_HEX_UNSIGNED);
-        if(printSignedHEX && (operand->mem.disp.value < 0) && (
-                    (operand->mem.base != ZYDIS_REGISTER_NONE) ||
-                    (operand->mem.index != ZYDIS_REGISTER_NONE)))
-        {
-            return ZydisPrintHexS(
-                       buffer, bufferLen, operand->mem.disp.value, 0, ZYDIS_TRUE, ZYDIS_FALSE);
-        }
-        char* bufEnd = *buffer + bufferLen;
-        if((operand->mem.base != ZYDIS_REGISTER_NONE) ||
-                (operand->mem.index != ZYDIS_REGISTER_NONE))
-        {
-            ZYDIS_CHECK(ZydisPrintStr(buffer, bufferLen, "+", ZYDIS_LETTER_CASE_DEFAULT));
-        }
-        return ZydisPrintHexU(
-                   buffer, bufEnd - *buffer, (uint64_t)operand->mem.disp.value, 0, ZYDIS_TRUE, ZYDIS_FALSE);
-    }
-    return ZYDIS_STATUS_SUCCESS;
-}
-
 void Zydis::GlobalInitialize()
 {
     if(!mInitialized)
@@ -51,7 +17,9 @@ void Zydis::GlobalInitialize()
         ZydisDecoderInit(&mDecoder, ZYDIS_MACHINE_MODE_LEGACY_32, ZYDIS_ADDRESS_WIDTH_32);
 #endif //_WIN64
         ZydisFormatterInit(&mFormatter, ZYDIS_FORMATTER_STYLE_INTEL);
-        mFormatter.funcPrintDisplacement = &ZydisFormatterPrintDisplacementIntelCustom;
+        ZydisFormatterSetProperty(&mFormatter, ZYDIS_FORMATTER_PROP_HEX_PADDING_ADDR, 0);
+        ZydisFormatterSetProperty(&mFormatter, ZYDIS_FORMATTER_PROP_HEX_PADDING_DISP, 0);
+        ZydisFormatterSetProperty(&mFormatter, ZYDIS_FORMATTER_PROP_HEX_PADDING_IMM, 0);
     }
 }
 
@@ -65,6 +33,7 @@ Zydis::Zydis()
       mVisibleOpCount(0)
 {
     GlobalInitialize();
+    memset(&mInstr, 0, sizeof(mInstr));
 }
 
 Zydis::~Zydis()
@@ -868,7 +837,7 @@ void Zydis::RegInfo(uint8_t regs[ZYDIS_REGISTER_MAX_VALUE + 1]) const
             regs[op.mem.segment] |= RAIRead | RAIExplicit;
             if(op.mem.base != ZYDIS_REGISTER_NONE)
                 regs[op.mem.base] |= RAIRead | RAIExplicit;
-            if(op.mem.base != ZYDIS_REGISTER_NONE)
+            if(op.mem.index != ZYDIS_REGISTER_NONE)
                 regs[op.mem.index] |= RAIRead | RAIExplicit;
         }
         break;

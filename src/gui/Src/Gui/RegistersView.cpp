@@ -1315,8 +1315,8 @@ RegistersView::RegistersView(CPUWidget* parent) : QScrollArea(parent), mVScrollO
 
     InitMappings();
 
-    memset(&wRegDumpStruct, 0, sizeof(REGDUMP_V2));
-    memset(&wCipRegDumpStruct, 0, sizeof(REGDUMP_V2));
+    memset(&wRegDumpStruct, 0, sizeof(REGDUMP));
+    memset(&wCipRegDumpStruct, 0, sizeof(REGDUMP));
     mCip = 0;
     mRegisterUpdates.clear();
 
@@ -1621,11 +1621,21 @@ QString RegistersView::helpRegister(REGISTER_NAME reg)
     case MxCsr_RC:
         return tr("Bits 13 and 14 of the MXCSR register (the rounding control [RC] field) control how the results of SIMD floating-point instructions are rounded.");
     case LastError:
-        //TODO: display help message of the specific error instead of this very generic message.
-        return tr("The value of GetLastError(). This value is stored in the TEB.");
+        char dat[1024];
+        LASTERROR* error;
+        error = (LASTERROR*)registerValue(&wRegDumpStruct, LastError);
+        if(DbgFunctions()->StringFormatInline(QString().sprintf("{winerror@%X}", error->code).toUtf8().constData(), sizeof(dat), dat) == 1) //FORMAT_SUCCESS
+            return dat;
+        else
+            return tr("The value of GetLastError(). This value is stored in the TEB.");
     case LastStatus:
-        //TODO: display help message of the specific status instead of this very generic message.
-        return tr("The NTSTATUS in the LastStatusValue field of the TEB.");
+        char dat1[1024];
+        LASTSTATUS* error1;
+        error1 = (LASTSTATUS*)registerValue(&wRegDumpStruct, LastStatus);
+        if(DbgFunctions()->StringFormatInline(QString().sprintf("{ntstatus@%X}", error1->code).toUtf8().constData(), sizeof(dat1), dat1) == 1) //FORMAT_SUCCESS
+            return dat1;
+        else
+            return tr("The NTSTATUS in the LastStatusValue field of the TEB.");
 #ifdef _WIN64
     case GS:
         return tr("The TEB of the current thread can be accessed as an offset of segment register GS (x64).\nThe TEB can be used to get a lot of information on the process without calling Win32 API.");
@@ -1684,6 +1694,8 @@ void RegistersView::mousePressEvent(QMouseEvent* event)
                     CPUDisassemblyView->hightlightToken(CapstoneTokenizer::SingleToken(CapstoneTokenizer::TokenType::XmmRegister, mRegisterMapping.constFind(r).value()));
                 else if(mFPUYMM.contains(r))
                     CPUDisassemblyView->hightlightToken(CapstoneTokenizer::SingleToken(CapstoneTokenizer::TokenType::YmmRegister, mRegisterMapping.constFind(r).value()));
+                else if(mSEGMENTREGISTER.contains(r))
+                    CPUDisassemblyView->hightlightToken(CapstoneTokenizer::SingleToken(CapstoneTokenizer::TokenType::MemorySegment, mRegisterMapping.constFind(r).value()));
                 else
                     mSelected = r;
             }
@@ -2498,9 +2510,8 @@ void RegistersView::drawRegister(QPainter* p, REGISTER_NAME reg, char* value)
 void RegistersView::updateRegistersSlot()
 {
     // read registers
-    REGDUMP_V2 z;
-    memset(&z, 0, sizeof(REGDUMP_V2));
-    DbgGetRegDumpEx((REGDUMP*)&z, sizeof(REGDUMP_V2));
+    REGDUMP z;
+    DbgGetRegDumpEx(&z, sizeof(REGDUMP));
     // update gui
     setRegisters(&z);
 }
@@ -3327,7 +3338,7 @@ SIZE_T RegistersView::GetSizeRegister(const REGISTER_NAME reg_name)
     return size;
 }
 
-int RegistersView::CompareRegisters(const REGISTER_NAME reg_name, REGDUMP_V2* regdump1, REGDUMP_V2* regdump2)
+int RegistersView::CompareRegisters(const REGISTER_NAME reg_name, REGDUMP* regdump1, REGDUMP* regdump2)
 {
     SIZE_T size = GetSizeRegister(reg_name);
     char* reg1_data = registerValue(regdump1, reg_name);
@@ -3339,7 +3350,7 @@ int RegistersView::CompareRegisters(const REGISTER_NAME reg_name, REGDUMP_V2* re
     return -1;
 }
 
-char* RegistersView::registerValue(const REGDUMP_V2* regd, const REGISTER_NAME reg)
+char* RegistersView::registerValue(const REGDUMP* regd, const REGISTER_NAME reg)
 {
     static int null_value = 0;
     // this is probably the most efficient general method to access the values of the struct
@@ -3654,7 +3665,7 @@ char* RegistersView::registerValue(const REGDUMP_V2* regd, const REGISTER_NAME r
     return (char*) &null_value;
 }
 
-void RegistersView::setRegisters(REGDUMP_V2* reg)
+void RegistersView::setRegisters(REGDUMP* reg)
 {
     // tests if new-register-value == old-register-value holds
     if(mCip != reg->regcontext.cip) //CIP changed
