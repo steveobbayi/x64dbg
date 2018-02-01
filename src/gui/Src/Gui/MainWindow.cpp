@@ -341,6 +341,7 @@ MainWindow::MainWindow(QWidget* parent)
     connect(mCpuWidget->getDisasmWidget(), SIGNAL(displaySnowmanWidget()), this, SLOT(displaySnowmanWidget()));
     connect(mCpuWidget->getDisasmWidget(), SIGNAL(displayLogWidget()), this, SLOT(displayLogWidget()));
     connect(mCpuWidget->getDisasmWidget(), SIGNAL(displayGraphWidget()), this, SLOT(displayGraphWidget()));
+    connect(mCpuWidget->getDisasmWidget(), SIGNAL(displaySymbolsWidget()), this, SLOT(displaySymbolWidget()));
     connect(mCpuWidget->getDisasmWidget(), SIGNAL(showPatches()), this, SLOT(patchWindow()));
 
     connect(mGraphView, SIGNAL(displaySnowmanWidget()), this, SLOT(displaySnowmanWidget()));
@@ -539,6 +540,8 @@ void MainWindow::setTab(QWidget* widget)
             return;
         }
     }
+
+    //TODO: restore configuration index
 }
 
 void MainWindow::loadTabDefaultOrder()
@@ -607,7 +610,9 @@ void MainWindow::saveWindowSettings()
     for(int i = 0; i < mWidgetList.size(); i++)
     {
         bool isDetached = detachedTabWindows.contains(mWidgetList[i].widget);
+        bool isDeleted = !isDetached && mTabWidget->indexOf(mWidgetList[i].widget) == -1;
         BridgeSettingSetUint("Detached Windows", mWidgetList[i].nativeName.toUtf8().constData(), isDetached);
+        BridgeSettingSetUint("Deleted Tabs", mWidgetList[i].nativeName.toUtf8().constData(), isDeleted);
         if(isDetached)
             BridgeSettingSet("Tab Window Settings", mWidgetList[i].nativeName.toUtf8().constData(),
                              mWidgetList[i].widget->parentWidget()->saveGeometry().toBase64().data());
@@ -646,6 +651,15 @@ void MainWindow::loadWindowSettings()
             if(BridgeSettingGet("Tab Window Settings", mWidgetList[i].nativeName.toUtf8().constData(), setting))
                 mWidgetList[i].widget->parentWidget()->restoreGeometry(QByteArray::fromBase64(QByteArray(setting)));
         }
+    }
+
+    // 'Restore' deleted tabs
+    for(int i = 0; i < mWidgetList.size(); i++)
+    {
+        duint isDeleted = 0;
+        BridgeSettingGetUint("Deleted Tabs", mWidgetList[i].nativeName.toUtf8().constData(), &isDeleted);
+        if(isDeleted)
+            mTabWidget->DeleteTab(mTabWidget->indexOf(mWidgetList[i].widget));
     }
 
     mCpuWidget->loadWindowSettings();

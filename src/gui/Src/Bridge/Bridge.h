@@ -41,6 +41,7 @@ public:
     ReferenceManager* referenceManager = nullptr;
     QWidget* snowmanView = nullptr;
     bool mIsRunning = false;
+    duint mLastCip = 0;
 
 signals:
     void disassembleAt(dsint va, dsint eip);
@@ -156,6 +157,7 @@ signals:
     void getDumpAttention();
     void openTraceFile(const QString & fileName);
     void updateTraceBrowser();
+    void symbolSelectModule(duint base);
 
 private:
     CRITICAL_SECTION csBridge;

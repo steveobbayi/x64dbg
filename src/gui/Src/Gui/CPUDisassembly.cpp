@@ -358,7 +358,7 @@ void CPUDisassembly::setupRightClickContextMenu()
     mMenuBuilder->addAction(togglePreview, [this, togglePreview](QMenu*)
     {
         togglePreview->setText(mPopupEnabled ? tr("Disable Branch Destination Preview") : tr("Enable Branch Destination Preview"));
-        return true;
+        return false; //hide this menu from the user, but keep the shortcut working
     });
 
     MenuBuilder* labelMenu = new MenuBuilder(this);
@@ -504,11 +504,10 @@ void CPUDisassembly::setupRightClickContextMenu()
     mMenuBuilder->addMenu(makeMenu(DIcon("analysis.png"), tr("Analysis")), analysisMenu);
     mMenuBuilder->addAction(makeShortcutAction(DIcon("pdb.png"), tr("Download Symbols for This Module"), SLOT(downloadCurrentSymbolsSlot()), "ActionDownloadSymbol"), [this](QMenu*)
     {
-        char module[MAX_MODULE_SIZE] = "";
-        return DbgGetModuleAt(rvaToVa(getInitialSelection()), module);
+        //only show this action in system modules (generally user modules don't have downloadable symbols)
+        return DbgFunctions()->ModGetParty(rvaToVa(getInitialSelection())) == 1;
     });
     mMenuBuilder->addSeparator();
-
 
     mMenuBuilder->addAction(makeShortcutAction(DIcon("compile.png"), tr("Assemble"), SLOT(assembleSlot()), "ActionAssemble"));
     removeAction(mMenuBuilder->addAction(makeShortcutAction(DIcon("patch.png"), tr("Patches"), SLOT(showPatchesSlot()), "ViewPatches"))); //prevent conflicting shortcut with the MainWindow
@@ -594,12 +593,14 @@ void CPUDisassembly::setupRightClickContextMenu()
     mFindCallsModule = makeAction(DIcon("call.png"), tr("&Intermodular calls"), SLOT(findCallsSlot()));
     mFindPatternModule = makeShortcutAction(DIcon("search_for_pattern.png"), tr("&Pattern"), SLOT(findPatternSlot()), "ActionFindPatternInModule");
     mFindGUIDModule = makeAction(DIcon("guid.png"), tr("&GUID"), SLOT(findGUIDSlot()));
+    mFindNamesModule = makeShortcutAction(DIcon("names.png"), tr("&Names"), SLOT(findNamesSlot()), "ActionFindNamesInModule");
     mSearchModuleMenu->addAction(mFindCommandModule);
     mSearchModuleMenu->addAction(mFindConstantModule);
     mSearchModuleMenu->addAction(mFindStringsModule);
     mSearchModuleMenu->addAction(mFindCallsModule);
     mSearchModuleMenu->addAction(mFindPatternModule);
     mSearchModuleMenu->addAction(mFindGUIDModule);
+    mSearchModuleMenu->addAction(mFindNamesModule);
 
     // Search in Current Function menu
     mFindCommandFunction = makeAction(DIcon("search_for_command.png"), tr("C&ommand"), SLOT(findCommandSlot()));
@@ -1258,6 +1259,18 @@ void CPUDisassembly::findGUIDSlot()
             DbgCmdExec(QString("findguid %1, %2, 0").arg(ToPtrString(start)).arg(ToPtrString(end - start)).toUtf8().constData());
     }
     emit displayReferencesWidget();
+}
+
+void CPUDisassembly::findNamesSlot()
+{
+    if(sender() == mFindNamesModule)
+    {
+        auto base = DbgFunctions()->ModBaseFromAddr(rvaToVa(getInitialSelection()));
+        if(!base)
+            return;
+        Bridge::getBridge()->symbolSelectModule(base);
+        emit displaySymbolsWidget();
+    }
 }
 
 void CPUDisassembly::selectionGetSlot(SELECTIONDATA* selection)
