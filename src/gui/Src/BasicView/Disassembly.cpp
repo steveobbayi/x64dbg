@@ -6,7 +6,6 @@
 #include "MainWindow.h"
 #include "CachedFontMetrics.h"
 #include "QBeaEngine.h"
-#include "CsQBeaEngine.h"
 #include "MemoryPage.h"
 
 Disassembly::Disassembly(QWidget* parent) : AbstractTableView(parent), mDisassemblyPopup(this)
@@ -14,6 +13,7 @@ Disassembly::Disassembly(QWidget* parent) : AbstractTableView(parent), mDisassem
     mMemPage = new MemoryPage(0, 0);
 
     mInstBuffer.clear();
+    setDrawDebugOnly(true);
 
     historyClear();
 
@@ -33,8 +33,6 @@ Disassembly::Disassembly(QWidget* parent) : AbstractTableView(parent), mDisassem
 
     mDisasm = new QBeaEngine(maxModuleSize);
     mDisasm->UpdateConfig();
-    mCsDisasm = new CsQBeaEngine(maxModuleSize);
-    mCsDisasm->UpdateConfig();
 
     mCodeFoldingManager = nullptr;
     duint setting;
